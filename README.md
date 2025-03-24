@@ -2,7 +2,7 @@
 
 Only snake, only appels.
 
-![image](https://github.com/user-attachments/assets/7e2c58e7-21c2-4883-b1a5-77defd82b224)
+![image](https://github.com/artqqwr/snake-game-golang/blob/main/image.png?raw=true)
 
 The project is over a year old.
 
