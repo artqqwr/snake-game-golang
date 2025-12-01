@@ -4,6 +4,7 @@ Simple snake game in Golang using [Ebitengine](https://github.com/hajimehoshi/eb
 
 Only snake, only appels.
 
+![play.webm](play.webm)
 
 The project is over a year old.
 
