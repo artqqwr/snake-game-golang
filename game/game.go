@@ -1,40 +1,14 @@
 package game
 
-import (
-	"log"
-
-	"github.com/hajimehoshi/ebiten/v2"
-)
-
-type Window struct {
-	Width, Height int
-	Title         string
-}
+import "github.com/hajimehoshi/ebiten/v2"
 
 type Game struct {
-	window Window
-	board  *Board
-}
-
-func New() *Game {
-	g := Game{
-		window: Window{
-			Width:  720,
-			Height: 480,
-			Title:  "Snake Game",
-		},
-	}
-
-	g.board = NewBoard(100)
-	return &g
+	board *Board
 }
 
 func (g *Game) Update() error {
-	if err := g.board.Update(); err != nil {
-		return err
-	}
 
-	return nil
+	return g.board.Update()
 }
 
 func (g *Game) Draw(screen *ebiten.Image) {
@@ -42,15 +16,18 @@ func (g *Game) Draw(screen *ebiten.Image) {
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeight int) {
-	return 320, 240
+	return 640, 640
 }
 
-func (g *Game) Run() {
-	ebiten.SetWindowSize(g.window.Width, g.window.Height)
-	ebiten.SetWindowTitle(g.window.Title)
-	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
-
-	if err := ebiten.RunGame(g); err != nil {
-		log.Fatal(err)
+func New() *Game {
+	g := Game{
+		board: NewBoard(640 / CellSize),
 	}
+
+	return &g
+}
+
+func (g *Game) Run() error {
+	ebiten.SetWindowSize(640, 640)
+	return ebiten.RunGame(g)
 }

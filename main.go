@@ -1,7 +1,9 @@
 package main
 
-import "snake-game/game"
+import "github.com/artqqwr/snake-game-golang/game"
 
 func main() {
-	game.New().Run()
+	if err := game.New().Run(); err != nil {
+		panic(err)
+	}
 }
