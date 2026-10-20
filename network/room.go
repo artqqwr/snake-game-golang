@@ -18,7 +18,8 @@ const (
 	DefaultUDPPort = 4041
 	DiscoveryPort  = 4042
 
-	// MaxPlayers is the protocol-wide maximum, including the host.
+	// MaxPlayers is the protocol-wide maximum for one round. A normal room
+	// includes the host; a dedicated room uses every slot for guests.
 	MaxPlayers   = 8
 	maxPortTries = 10
 )
@@ -28,8 +29,13 @@ type RoomOptions struct {
 	Name       string
 	MapIndex   int
 	Difficulty int
-	// MaxPlayers includes the host. Zero selects the protocol maximum.
+	// MaxPlayers includes the host in a normal room. In a dedicated room the
+	// server does not play, so MaxPlayers is the guest limit. Zero selects the
+	// protocol maximum.
 	MaxPlayers int
+	// Dedicated hosts a match without a local host player. Guest IDs start at
+	// zero and the server is not included in the roster.
+	Dedicated bool
 	// TCPPort/UDPPort: 0 selects the default range, -1 binds an ephemeral port.
 	TCPPort int
 	UDPPort int
@@ -65,6 +71,7 @@ type clientState struct {
 	writeMu sync.Mutex
 	udpAddr *net.UDPAddr
 	ready   bool
+	bot     bool
 	lastSeq uint64
 }
 
@@ -173,8 +180,17 @@ func (r *Room) InfoSnapshot() RoomInfo {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	result := r.info
-	result.Players = len(r.users) + 1
+	result.Players = r.playerCountLocked()
 	return result
+}
+
+// playerCountLocked returns the number of match participants. A normal host
+// occupies a slot; a dedicated server does not. The caller must hold r.mu.
+func (r *Room) playerCountLocked() int {
+	if r.opts.Dedicated {
+		return len(r.users)
+	}
+	return len(r.users) + 1
 }
 
 // DiscoveryAvailable reports whether the room was able to bind the discovery port.
@@ -198,19 +214,23 @@ func (r *Room) GuestCount() int {
 	return len(r.users)
 }
 
-// MaxPlayers returns the configured player limit, including the host.
+// MaxPlayers returns the configured participant limit. In a normal room it
+// includes the host; in a dedicated room it is the guest limit.
 func (r *Room) MaxPlayers() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.maxPlayers
 }
 
-// PlayerIDs returns the sorted roster including the host.
+// PlayerIDs returns the sorted match roster. It includes the host in a normal
+// room and only connected guests in a dedicated room.
 func (r *Room) PlayerIDs() []int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	ids := make([]int, 0, len(r.users)+1)
-	ids = append(ids, 0)
+	if !r.opts.Dedicated {
+		ids = append(ids, 0)
+	}
 	for id := range r.users {
 		ids = append(ids, id)
 	}
@@ -218,8 +238,9 @@ func (r *Room) PlayerIDs() []int {
 	return ids
 }
 
-// StartRoster returns the sorted list of players that may start a round. It
-// includes the host and every connected guest, but only when at least one
+// StartRoster returns the sorted list of players that may start a round. In a
+// normal room it includes the host and every connected guest; in a dedicated
+// room it contains only guests. The roster is returned only when at least one
 // guest is present and all connected guests are ready. The check and snapshot
 // happen atomically so a guest cannot slip into the roster while the host is
 // already preparing the round.
@@ -230,7 +251,9 @@ func (r *Room) StartRoster() ([]int, bool) {
 		return nil, false
 	}
 	ids := make([]int, 0, len(r.users)+1)
-	ids = append(ids, 0)
+	if !r.opts.Dedicated {
+		ids = append(ids, 0)
+	}
 	for id, client := range r.users {
 		if !client.ready {
 			return nil, false
@@ -256,11 +279,15 @@ func (r *Room) AllReady() bool {
 	return true
 }
 
-// ReadyCount returns ready guests plus the always-ready host.
+// ReadyCount returns ready participants. In a normal room the host is always
+// counted; a dedicated server has no host player.
 func (r *Room) ReadyCount() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	count := 1
+	count := 0
+	if !r.opts.Dedicated {
+		count = 1
+	}
 	for _, client := range r.users {
 		if client.ready {
 			count++
@@ -278,9 +305,11 @@ func (r *Room) LobbySnapshot() LobbyInfo {
 		MaxPlayers: r.maxPlayers,
 		InRound:    r.info.InRound,
 	}
-	lobby.Players = append(lobby.Players, LobbyPlayer{ID: 0, Ready: true})
+	if !r.opts.Dedicated {
+		lobby.Players = append(lobby.Players, LobbyPlayer{ID: 0, Ready: true, Host: true})
+	}
 	for id, client := range r.users {
-		lobby.Players = append(lobby.Players, LobbyPlayer{ID: id, Ready: client.ready})
+		lobby.Players = append(lobby.Players, LobbyPlayer{ID: id, Ready: client.ready, Bot: client.bot})
 	}
 	sort.Slice(lobby.Players, func(i, j int) bool { return lobby.Players[i].ID < lobby.Players[j].ID })
 	return lobby
@@ -388,26 +417,32 @@ func (r *Room) acceptLoop(listener net.Listener) {
 			continue
 		}
 		r.mu.Lock()
-		if len(r.users) >= r.maxPlayers-1 {
+		limit := r.maxPlayers - 1
+		firstID := 1
+		if r.opts.Dedicated {
+			limit = r.maxPlayers
+			firstID = 0
+		}
+		if len(r.users) >= limit {
 			r.mu.Unlock()
 			_ = conn.Close()
 			continue
 		}
-		playerID := 0
-		for id := 1; id < r.maxPlayers; id++ {
+		playerID := -1
+		for id := firstID; id < r.maxPlayers; id++ {
 			if _, exists := r.users[id]; !exists {
 				playerID = id
 				break
 			}
 		}
-		if playerID == 0 {
+		if playerID < 0 {
 			r.mu.Unlock()
 			_ = conn.Close()
 			continue
 		}
 		client := &clientState{conn: conn, encoder: json.NewEncoder(conn)}
 		r.users[playerID] = client
-		r.info.Players = len(r.users) + 1
+		r.info.Players = r.playerCountLocked()
 		r.mu.Unlock()
 		go r.handleClient(playerID, client)
 	}
@@ -420,7 +455,7 @@ func (r *Room) handleClient(playerID int, client *clientState) {
 		if r.users[playerID] == client {
 			delete(r.users, playerID)
 		}
-		r.info.Players = len(r.users) + 1
+		r.info.Players = r.playerCountLocked()
 		r.mu.Unlock()
 		r.emit(Event{Type: EventLeft, Player: playerID})
 		r.BroadcastLobby()
@@ -453,6 +488,9 @@ func (r *Room) handleClient(playerID int, client *clientState) {
 		case MessageReady:
 			r.mu.Lock()
 			client.ready = message.Ready
+			if message.Bot {
+				client.bot = true
+			}
 			r.mu.Unlock()
 			if !readyReceived {
 				readyReceived = true

@@ -59,3 +59,24 @@ func TestGuestStartWithoutLocalPlayerWaitsForNextRound(t *testing.T) {
 		t.Fatalf("session is waiting=%v round=%d", game.session.waiting, game.session.round)
 	}
 }
+
+func TestDedicatedGuestCanUsePlayerZero(t *testing.T) {
+	game := New()
+	game.session = &session{role: roleGuest, playerID: 0}
+	game.beginRound(&network.StartInfo{
+		MapIndex:      0,
+		Difficulty:    1,
+		Round:         1,
+		WorldSize:     64,
+		ActivePlayers: []int{0, 1},
+	})
+	if game.screen != screenPlaying {
+		t.Fatalf("screen is %d, want playing", game.screen)
+	}
+	if game.board == nil || game.board.LocalID() != 0 {
+		t.Fatalf("board local id is %v, want 0", game.board)
+	}
+	if game.session.isHost() {
+		t.Fatal("guest with slot zero was treated as host")
+	}
+}

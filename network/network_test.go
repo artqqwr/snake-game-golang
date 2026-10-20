@@ -388,3 +388,97 @@ func TestCloseIsIdempotent(t *testing.T) {
 		t.Fatalf("close empty client: %v", err)
 	}
 }
+
+func startDedicatedTestRoom(t *testing.T, maxPlayers int) *Room {
+	t.Helper()
+	room := NewRoom(RoomOptions{
+		Name:          "dedicated test room",
+		TCPPort:       -1,
+		UDPPort:       -1,
+		DiscoveryPort: -1,
+		MaxPlayers:    maxPlayers,
+		Dedicated:     true,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := room.Start(ctx); err != nil {
+		cancel()
+		t.Fatalf("start dedicated room: %v", err)
+	}
+	t.Cleanup(func() {
+		room.Close()
+		cancel()
+	})
+	return room
+}
+
+func TestDedicatedRoomUsesEverySlotWithoutHost(t *testing.T) {
+	room := startDedicatedTestRoom(t, MaxPlayers)
+	if players := room.InfoSnapshot().Players; players != 0 {
+		t.Fatalf("dedicated room starts with %d players, want 0", players)
+	}
+	clients := make([]*Client, 0, MaxPlayers)
+	for wantID := 0; wantID < MaxPlayers; wantID++ {
+		client := joinTestRoom(t, room)
+		if client.PlayerID != wantID {
+			t.Fatalf("dedicated guest id is %d, want %d", client.PlayerID, wantID)
+		}
+		clients = append(clients, client)
+	}
+	if ids := room.PlayerIDs(); len(ids) != MaxPlayers || ids[0] != 0 || ids[MaxPlayers-1] != MaxPlayers-1 {
+		t.Fatalf("dedicated roster is %v, want 0..%d", ids, MaxPlayers-1)
+	}
+	lobby := room.LobbySnapshot()
+	if len(lobby.Players) != MaxPlayers {
+		t.Fatalf("dedicated lobby has %d rows, want %d", len(lobby.Players), MaxPlayers)
+	}
+	for _, player := range lobby.Players {
+		if player.Host {
+			t.Fatalf("dedicated lobby marks P%d as host: %+v", player.ID+1, player)
+		}
+	}
+	for _, client := range clients {
+		if err := client.SendReady(); err != nil {
+			t.Fatalf("send ready: %v", err)
+		}
+	}
+	for index := 0; index < MaxPlayers; index++ {
+		waitRoomEvent(t, room.Events(), EventReady)
+	}
+	roster, ok := room.StartRoster()
+	if !ok || len(roster) != MaxPlayers {
+		t.Fatalf("dedicated start roster is %v (ok=%v), want all slots", roster, ok)
+	}
+	if roster[0] != 0 || roster[MaxPlayers-1] != MaxPlayers-1 {
+		t.Fatalf("dedicated start roster is %v, want 0..%d", roster, MaxPlayers-1)
+	}
+	if room.ReadyCount() != MaxPlayers {
+		t.Fatalf("dedicated ready count is %d, want %d", room.ReadyCount(), MaxPlayers)
+	}
+	address := net.JoinHostPort("127.0.0.1", strconv.Itoa(room.InfoSnapshot().TCPPort))
+	if extra, err := Join(context.Background(), address); err == nil {
+		_ = extra.Close()
+		t.Fatal("guest above dedicated MaxPlayers was accepted")
+	}
+	if err := clients[0].Close(); err != nil {
+		t.Fatalf("close guest: %v", err)
+	}
+	waitRoomEvent(t, room.Events(), EventLeft)
+	replacement := joinTestRoom(t, room)
+	if replacement.PlayerID != 0 {
+		t.Fatalf("dedicated replacement id is %d, want reused slot 0", replacement.PlayerID)
+	}
+}
+
+func TestDedicatedRoomLobbyMarksBots(t *testing.T) {
+	room := startDedicatedTestRoom(t, 4)
+	client := joinTestRoom(t, room)
+	waitRoomEvent(t, room.Events(), EventJoined)
+	if err := client.SendReadyBot(); err != nil {
+		t.Fatalf("send bot ready: %v", err)
+	}
+	waitRoomEvent(t, room.Events(), EventReady)
+	lobby := room.LobbySnapshot()
+	if len(lobby.Players) != 1 || !lobby.Players[0].Bot || !lobby.Players[0].Ready {
+		t.Fatalf("unexpected bot lobby snapshot: %+v", lobby)
+	}
+}

@@ -119,3 +119,14 @@ func TestSnapshotCodecRejectsTruncatedPacket(t *testing.T) {
 		t.Fatal("truncated snapshot was accepted")
 	}
 }
+
+func TestInputCodecAcceptsDedicatedPlayerZero(t *testing.T) {
+	encoded := EncodeInput(0, Input{Direction: 2, Seq: 9})
+	player, input, err := DecodeInput(encoded)
+	if err != nil {
+		t.Fatalf("decode input: %v", err)
+	}
+	if player != 0 || input.Direction != 2 || input.Seq != 9 {
+		t.Fatalf("decoded player %d input %+v, want player 0 direction 2 seq 9", player, input)
+	}
+}

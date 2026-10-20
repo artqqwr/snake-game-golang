@@ -184,6 +184,7 @@ func (g *Game) drawLobby(screen *ebiten.Image) {
 		} else {
 			drawCentered(screen, "WAITING FOR PLAYERS TO JOIN AND READY UP", 542)
 		}
+		drawCentered(screen, "B - ADD BOT", 565)
 		drawCentered(screen, "ESC - CLOSE ROOM", 585)
 		return
 	}
@@ -214,8 +215,11 @@ func (g *Game) drawLobbyRoster(screen *ebiten.Image, lobby network.LobbyInfo, st
 			status = "READY"
 		}
 		label := fmt.Sprintf("P%d", player.ID+1)
-		if player.ID == 0 {
+		if player.Host {
 			label += "  HOST"
+		}
+		if player.Bot {
+			label += "  BOT"
 		}
 		if g.session != nil && player.ID == g.session.playerID {
 			label += "  (YOU)"

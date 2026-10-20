@@ -52,6 +52,7 @@ type Options struct {
 	Join       string
 	RoomName   string
 	MaxPlayers int
+	Bots       int
 }
 
 type asyncKind int
@@ -101,7 +102,10 @@ type Game struct {
 	roomName string
 	autoHost bool
 	autoJoin string
+	autoBots int
 	autoDone bool
+
+	botManager *BotManager
 }
 
 // New creates a game that starts in the main menu.
@@ -125,6 +129,7 @@ func NewWithOptions(options Options) *Game {
 	}
 	game.autoHost = options.Host
 	game.autoJoin = options.Join
+	game.autoBots = options.Bots
 	if options.Host {
 		game.multiplayerMode = multiplayerHost
 	}
@@ -259,6 +264,10 @@ func (g *Game) startHost() {
 		return
 	}
 	g.session = session
+	if g.autoBots > 0 {
+		g.spawnBots(session, g.autoBots)
+		g.autoBots = 0
+	}
 	g.screen = screenLobby
 }
 
@@ -420,6 +429,9 @@ func (g *Game) updateHostLobby(s *session) {
 	} else {
 		s.status = "WAITING FOR PLAYERS"
 	}
+	if justPressed(ebiten.KeyB) {
+		g.spawnBots(s, 1)
+	}
 	if justPressed(ebiten.KeyEscape) {
 		g.leaveNetwork("ROOM CLOSED")
 		return
@@ -431,6 +443,44 @@ func (g *Game) updateHostLobby(s *session) {
 			s.status = "WAITING FOR PLAYERS TO READY"
 		}
 	}
+}
+
+func (g *Game) spawnBots(s *session, count int) {
+	if s == nil || !s.isHost() || count <= 0 {
+		return
+	}
+	if g.botManager == nil {
+		info := s.room.InfoSnapshot()
+		if info.TCPPort == 0 {
+			return
+		}
+		address := net.JoinHostPort("127.0.0.1", strconv.Itoa(info.TCPPort))
+		g.botManager = NewBotManager(context.Background(), address)
+	}
+	connected := len(s.lobby.Players)
+	if connected == 0 {
+		connected = len(s.room.PlayerIDs())
+	}
+	pending := g.botManager.Count()
+	for _, player := range s.lobby.Players {
+		if player.Bot {
+			pending--
+		}
+	}
+	free := s.room.MaxPlayers() - connected - pending
+	if free <= 0 {
+		s.status = "ROOM IS FULL"
+		return
+	}
+	if count > free {
+		count = free
+	}
+	for index := 0; index < count; index++ {
+		if !g.botManager.Add() {
+			return
+		}
+	}
+	s.status = "BOT JOINING"
 }
 
 func (g *Game) updateGuestLobby(s *session) {
@@ -909,6 +959,10 @@ func (g *Game) drainAsync() {
 
 func (g *Game) closeSession() {
 	g.cancelScan()
+	if g.botManager != nil {
+		g.botManager.Close()
+		g.botManager = nil
+	}
 	if g.session != nil {
 		g.session.close()
 		g.session = nil

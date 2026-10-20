@@ -106,7 +106,7 @@ func DecodeInput(data []byte) (int, Input, error) {
 	if direction > 3 {
 		return 0, Input{}, fmt.Errorf("%w: direction out of range", ErrMalformedPacket)
 	}
-	if player < 1 || player >= MaxPlayers {
+	if player < 0 || player >= MaxPlayers {
 		return 0, Input{}, fmt.Errorf("%w: player out of range", ErrMalformedPacket)
 	}
 	return player, Input{Direction: int(direction), Seq: seq}, nil

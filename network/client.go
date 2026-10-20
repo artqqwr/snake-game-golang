@@ -54,9 +54,23 @@ func Join(ctx context.Context, address string) (*Client, error) {
 		messages:  make(chan Message, 64),
 		done:      make(chan struct{}),
 	}
-	if err := client.handshake(); err != nil {
+	stopWatch := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-stopWatch:
+		}
+	}()
+	err = client.handshake()
+	close(stopWatch)
+	if err != nil {
 		_ = conn.Close()
 		return nil, err
+	}
+	if ctx.Err() != nil {
+		_ = conn.Close()
+		return nil, ctx.Err()
 	}
 
 	udpConn, err := net.ListenUDP("udp", &net.UDPAddr{})
@@ -143,6 +157,13 @@ func (c *Client) Disconnected() <-chan struct{} { return c.done }
 // SendReady notifies the host that the guest is ready to start.
 func (c *Client) SendReady() error {
 	return c.send(Message{Type: MessageReady, Version: ProtocolVersion, Player: c.PlayerID, Ready: true})
+}
+
+// SendReadyBot marks the client as a bot while reporting readiness. The host
+// uses this only for display; bot decisions still travel over the normal input
+// protocol.
+func (c *Client) SendReadyBot() error {
+	return c.send(Message{Type: MessageReady, Version: ProtocolVersion, Player: c.PlayerID, Ready: true, Bot: true})
 }
 
 // SendDisconnect asks the host to close the room for this guest.

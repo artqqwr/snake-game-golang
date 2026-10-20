@@ -20,6 +20,7 @@ type Message struct {
 	Version int         `json:"version"`
 	Player  int         `json:"player,omitempty"`
 	Ready   bool        `json:"ready,omitempty"`
+	Bot     bool        `json:"bot,omitempty"`
 	Paused  bool        `json:"paused,omitempty"`
 	Reason  string      `json:"reason,omitempty"`
 	Room    *RoomInfo   `json:"room,omitempty"`
@@ -38,6 +39,8 @@ type LobbyInfo struct {
 type LobbyPlayer struct {
 	ID    int  `json:"id"`
 	Ready bool `json:"ready"`
+	Host  bool `json:"host,omitempty"`
+	Bot   bool `json:"bot,omitempty"`
 }
 
 // StartInfo tells the guest which round configuration the host selected.
